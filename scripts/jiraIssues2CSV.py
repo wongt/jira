@@ -1,8 +1,9 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import iso8601
 import csv
+import datetime
+import iso8601
 import json
 import requests
 import sys
@@ -32,7 +33,7 @@ def getJiraIssues(jqlQuery, startAt, maxResults, fields):
 	url = JIRA_URL + jqlQuery + "&startAt=" + str(startAt) + "&maxResults=" + str(maxResults) + "&fields=" + fields
 	return requests.get(url, auth=HTTPBasicAuth(LOGIN, PASSWORD))
 
-def WriteDictToCSV(csvFile, listDictData):
+def writeDictToCSV(csvFile, listDictData):
 
 	keys = listDictData[0].keys()
 
@@ -89,9 +90,45 @@ def extractField(issue):
 	else:
 		a['department'] = issue['fields']['customfield_11605']['value']
 
-	#print json.dumps(a, indent=4)
+	#Get timestamp when issue transitioned to In Progress
+	if a['resolutiondate'] != "" and a['status'] == "Done":
+		a['startdate'] = getTimestampInProgress(issue)
+	else:
+		a['startdate'] = None
 
-	return a	
+	return a
+
+def getIssueHistories(issueKey):
+	"""
+	"""
+	url = JIRA_URL + "/issue/" + issueKey +"?expand=changelog&fields=created"
+
+ 	return requests.get(url, auth=HTTPBasicAuth(LOGIN, PASSWORD))
+
+def getTimestampInProgress(issue):
+	"""
+	"""
+
+	timeReference = datetime.datetime.now()
+	inProgressTimeStamp = timeReference
+
+	response = getIssueHistories(issue['key'])
+	data = response.json()
+	histories = data['changelog']['histories']
+
+	for history in histories:
+		for item in history['items']:
+			if item['field'] == "status" and item['toString'] == "In Progress" and item['fromString'] != "Done" and item['fromString'] != "Fixed" and item['fromString'] != "To Be Checked":
+				timestamp = iso8601.parse_date(history['created']).replace(tzinfo=None)
+
+				if timestamp < inProgressTimeStamp:
+					inProgressTimeStamp = timestamp
+
+	if timeReference == inProgressTimeStamp:
+		inProgressTimeStamp = None
+	
+	return inProgressTimeStamp
+
 
 def main():
 
@@ -112,12 +149,10 @@ def main():
 		for issue in data['issues']:
 			jiraIssues.append(extractField(issue))
 
-		#print json.dumps(data, indent=4)
-
 		#Increment to next page
 		startAt = startAt + MAX_RESULTS
 
-	WriteDictToCSV('jiraIssues.csv', jiraIssues)
+	writeDictToCSV('jiraIssues.csv', jiraIssues)
 
 	
 
